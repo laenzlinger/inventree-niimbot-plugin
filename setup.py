@@ -1,8 +1,17 @@
 # -*- coding: utf-8 -*-
 
+import importlib
+import importlib.util
+import os
 import setuptools
 
-from inventree_niimbot.version import NIIMBOT_PLUGIN_VERSION
+"""Read the plugin version from the source code."""
+module_path = os.path.join(
+    os.path.dirname(__file__), "inventree_niimbot", "__init__.py"
+)
+spec = importlib.util.spec_from_file_location("inventree_niimbot", module_path)
+inventree_niimbot = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(inventree_niimbot)
 
 with open('README.md', encoding='utf-8') as f:
     long_description = f.read()
@@ -11,7 +20,7 @@ with open('README.md', encoding='utf-8') as f:
 setuptools.setup(
     name="inventree-niimbot-plugin",
 
-    version=NIIMBOT_PLUGIN_VERSION,
+    version=inventree_niimbot.NIIMBOT_PLUGIN_VERSION,
 
     author="piramja",
 
@@ -23,7 +32,7 @@ setuptools.setup(
 
     long_description_content_type='text/markdown',
 
-    keywords="inventree inventreeplugins label printer printing inventory",
+    keywords="inventree inventreeplugins label printer printing inventory niimbot",
 
     url="https://github.com/piramja/inventree-niimbot-plugin",
 
@@ -52,4 +61,10 @@ setuptools.setup(
             "NiimbotLabeLPlugin = inventree_niimbot.niimbot_plugin:NiimbotLabelPlugin"
         ]
     },
+
+    classifiers=[
+        "Programming Language :: Python :: 3",
+        "Operating System :: OS Independent",
+        "Framework :: InvenTree",
+    ],
 )

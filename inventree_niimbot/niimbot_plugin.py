@@ -9,11 +9,16 @@ from django.utils.translation import gettext_lazy as _
 # printing options
 from rest_framework import serializers
 
-from inventree_niimbot.version import NIIMBOT_PLUGIN_VERSION
+from django.db import models
+from django.utils.translation import gettext_lazy as _
+
+from . import NIIMBOT_PLUGIN_VERSION
 
 # InvenTree plugin libs
+from report.models import LabelTemplate
 from plugin import InvenTreePlugin
-from plugin.mixins import LabelPrintingMixin, SettingsMixin
+from plugin.machine import BaseMachineType
+from plugin.machine.machine_types import LabelPrinterBaseDriver, LabelPrinterMachine
 
 # Image library
 from PIL import Image
@@ -36,16 +41,26 @@ class NiimbotLabelSerializer(serializers.Serializer):
 
     copies = serializers.IntegerField(
         default=1,
-        label=_('Copies'),
-        help_text=_('Number of copies to print'),
+        label=_("Copies"),
+        help_text=_("Number of copies to print"),
     )
 
+# Backwards compatibility imports
+try:
+    from plugin.mixins import MachineDriverMixin
+except ImportError:
+    class MachineDriverMixin:
+        """Dummy mixin for backwards compatibility."""
 
-class NiimbotLabelPlugin(LabelPrintingMixin, SettingsMixin, InvenTreePlugin):
+        pass
+
+class NiimbotLabelPlugin(MachineDriverMixin, InvenTreePlugin):
 
     AUTHOR = "piramja"
     DESCRIPTION = "Label printing plugin for Niimbot label printers"
     VERSION = NIIMBOT_PLUGIN_VERSION
+
+    MIN_VERSION = "0.16.0"
 
     NAME = "Niimbot Labels"
     SLUG = "niimbot"
@@ -55,130 +70,160 @@ class NiimbotLabelPlugin(LabelPrintingMixin, SettingsMixin, InvenTreePlugin):
 
     # Use background printing
     BLOCKING_PRINT = False
+
+    def get_machine_drivers(self) -> list:
+        """Register machine drivers."""
+        return [NiimbotLabelPrinterDriver]
+
+
+class NiimbotLabelPrinterDriver(LabelPrinterBaseDriver):
+    """Niimbot label printing driver for InvenTree."""
+
+    SLUG = "niimbot"
+    NAME = "Niimbot Label Printer Driver"
+    DESCRIPTION = "Niimbot label printing driver for InvenTree"
+
+    def __init__(self, *args, **kwargs):
+        """Initialize the NiimbotLabelPrinterDriver."""
+
+        self.MACHINE_SETTINGS = {
+            "MODEL": {
+                "name": _("Printer Model"),
+                "description": _("Select model of Niimbot printer"),
+                "choices": [
+                    ("b1", "Niimbot B1"),
+                    ("b18", "Niimbot B18"),
+                    ("b21", "Niimbot B21"),
+                    ("d11", "Niimbot D11"),
+                    ("d110", "Niimbot D110")
+                ],
+                "default": "b1",
+                "required": True,
+            },
+            "DENSITY": {
+                "name": _("Density"),
+                "description": _("Density of the print (3 is max for b18, d11, d110)"),
+                "choices": [
+                    ("1", "density 1"),
+                    ("2", "density 2"),
+                    ("3", "density 3"),
+                    ("4", "density 4"),
+                    ("5", "density 5"),
+                ],
+                "default": "3",
+                "required": True,
+            },
+            "ROTATION": {
+                "name": _("Rotation"),
+                "description": _("Image rotation (clockwise)"),
+                "choices": [
+                    ("0", "0 degrees"),
+                    ("90", "90 degrees"),
+                    ("180", "180 degrees"),
+                    ("270", "270 degrees"),
+                ],
+                "default": "0",
+                "required": True,
+            },
+            "SCALING": {
+                "name": _("Scaling (%)"),
+                "description": _("Image scaling in percent"),
+                "choices": [
+                    ("2", "200%"),
+                    ("1.9", "190%"),
+                    ("1.8", "180%"),
+                    ("1.7", "170%"),
+                    ("1.6", "160%"),
+                    ("1.5", "150%"),
+                    ("1.4", "140%"),
+                    ("1.3", "130%"),
+                    ("1.2", "120%"),
+                    ("1.1", "110%"),
+                    ("1", "100%"),
+                    ("0.9", "90%"),
+                    ("0.8", "80%"),
+                    ("0.7", "70%"),
+                    ("0.6", "60%"),
+                    ("0.5", "50%"),
+                    ("0.4", "40%"),
+                    ("0.3", "30%"),
+                    ("0.2", "20%"),
+                    ("0.1", "10%"),
+                ],
+                "default": "1",
+                "required": True,
+            },
+            "V_OFFSET": {
+                "name": _("Vertical Offset (px)"),
+                "description": _("Image offset vertical"),
+                "choices": [
+                    ("0", "0px"),
+                    ("10", "10px"),
+                    ("20", "20px"),
+                    ("30", "30px"),
+                    ("40", "40px"),
+                    ("50", "50px"),
+                    ("60", "60px"),
+                    ("70", "70px"),
+                    ("80", "80px"),
+                    ("90", "90px"),
+                    ("100", "100px"),
+                    ("110", "110px"),
+                    ("120", "120px"),
+                    ("130", "130px"),
+                    ("140", "140px"),
+                    ("150", "150px"),
+                    ("160", "160px"),
+                    ("170", "170px"),
+                    ("180", "180px"),
+                    ("190", "190px"),
+                    ("200", "200px"),
+                ],
+                "default": "0",
+                "required": True,
+            },
+            "H_OFFSET": {
+                "name": _("Horizontal Offset (px)"),
+                "description": _("Image offset horizontal"),
+                "choices": [
+                    ("0", "0px"),
+                    ("10", "10px"),
+                    ("20", "20px"),
+                    ("30", "30px"),
+                    ("40", "40px"),
+                    ("50", "50px"),
+                    ("60", "60px"),
+                    ("70", "70px"),
+                    ("80", "80px"),
+                    ("90", "90px"),
+                    ("100", "100px"),
+                    ("110", "110px"),
+                    ("120", "120px"),
+                    ("130", "130px"),
+                    ("140", "140px"),
+                    ("150", "150px"),
+                    ("160", "160px"),
+                    ("170", "170px"),
+                    ("180", "180px"),
+                    ("190", "190px"),
+                    ("200", "200px"),
+                ],
+                "default": "0",
+                "required": True,
+            },
+        }
+
+        super().__init__(*args, **kwargs)
+
+
+    def init_machine(self, machine: BaseMachineType):
+        """Machine initialize hook."""
+        # static dummy setting for now, should probably be actively checked for USB printers
+        # and maybe by running a simple ping test or similar for networked printers
+        machine.set_status(LabelPrinterMachine.MACHINE_STATUS.CONNECTED)
     
-    SETTINGS = {
-        'MODEL': {
-            'name': _('Printer Model'),
-            'description': _('Select model of Niimbot printer'),
-            'choices': [
-                ('b1', 'Niimbot B1'),
-                ('b18', 'Niimbot B18'),
-                ('b21', 'Niimbot B21'),
-                ('d11', 'Niimbot D11'),
-                ('d110', 'Niimbot D110')
-            ],
-            'default': 'b1',
-        },
-        'DENSITY': {
-            'name': _('Density'),
-            'description': _('Density of the print (3 is max for b18, d11, d110)'),
-            'choices': [
-                ('1', 'density 1'),
-                ('2', 'density 2'),
-                ('3', 'density 3'),
-                ('4', 'density 4'),
-                ('5', 'density 5'),
-            ],
-            'default': '3',
-        },
-        'ROTATION': {
-            'name': _('Rotation'),
-            'description': _('Image rotation (clockwise)'),
-            'choices': [
-                ('0', '0 degrees'),
-                ('90', '90 degrees'),
-                ('180', '180 degrees'),
-                ('270', '270 degrees'),
-            ],
-            'default': '0',
-        },
-        'SCALING': {
-            'name': _('Scaling (%)'),
-            'description': _('Image scaling in percent'),
-            'choices': [
-                ('2', '200%'),
-                ('1.9', '190%'),
-                ('1.8', '180%'),
-                ('1.7', '170%'),
-                ('1.6', '160%'),
-                ('1.5', '150%'),
-                ('1.4', '140%'),
-                ('1.3', '130%'),
-                ('1.2', '120%'),
-                ('1.1', '110%'),
-                ('1', '100%'),
-                ('0.9', '90%'),
-                ('0.8', '80%'),
-                ('0.7', '70%'),
-                ('0.6', '60%'),
-                ('0.5', '50%'),
-                ('0.4', '40%'),
-                ('0.3', '30%'),
-                ('0.2', '20%'),
-                ('0.1', '10%'),
-            ],
-            'default': '1',
-        },
-        'V_OFFSET': {
-            'name': _('Vertical Offset (px)'),
-            'description': _('Image offset vertical'),
-            'choices': [
-                ('0', '0px'),
-                ('10', '10px'),
-                ('20', '20px'),
-                ('30', '30px'),
-                ('40', '40px'),
-                ('50', '50px'),
-                ('60', '60px'),
-                ('70', '70px'),
-                ('80', '80px'),
-                ('90', '90px'),
-                ('100', '100px'),
-                ('110', '110px'),
-                ('120', '120px'),
-                ('130', '130px'),
-                ('140', '140px'),
-                ('150', '150px'),
-                ('160', '160px'),
-                ('170', '170px'),
-                ('180', '180px'),
-                ('190', '190px'),
-                ('200', '200px'),
-            ],
-            'default': '0',
-        },
-        'H_OFFSET': {
-            'name': _('Horizontal Offset (px)'),
-            'description': _('Image offset horizontal'),
-            'choices': [
-                ('0', '0px'),
-                ('10', '10px'),
-                ('20', '20px'),
-                ('30', '30px'),
-                ('40', '40px'),
-                ('50', '50px'),
-                ('60', '60px'),
-                ('70', '70px'),
-                ('80', '80px'),
-                ('90', '90px'),
-                ('100', '100px'),
-                ('110', '110px'),
-                ('120', '120px'),
-                ('130', '130px'),
-                ('140', '140px'),
-                ('150', '150px'),
-                ('160', '160px'),
-                ('170', '170px'),
-                ('180', '180px'),
-                ('190', '190px'),
-                ('200', '200px'),
-            ],
-            'default': '0',
-        },
-    }
     
-    
-    def print_label(self, **kwargs):
+    def print_label(self, machine: LabelPrinterMachine, label: LabelTemplate, item, **kwargs) -> None:
         """
         Send the label to the printer
         """
@@ -189,32 +234,26 @@ class NiimbotLabelPlugin(LabelPrintingMixin, SettingsMixin, InvenTreePlugin):
         # TODO: Improve label auto-scaling based on provided width and height information
 
         # Extract width (x) and height (y) information
-        # width = kwargs['width']
-        # height = kwargs['height']
+        # width = kwargs["width"]
+        # height = kwargs["height"]
         # ^ currently this width and height are those of the label template (before conversion to PDF
         # and PNG) and are of little use
 
         # Printing options requires a modern-ish InvenTree backend,
         # which supports the 'printing_options' keyword argument
-        options = kwargs.get('printing_options', {})
-        n_copies = int(options.get('copies', 1))
+        options = kwargs.get("printing_options", {})
+        n_copies = int(options.get("copies", 1))
 
         # Look for png data in kwargs (if provided)
-        label_image = kwargs.get('png_file', None)
-
-        if not label_image:
-            # Convert PDF to PNG
-            pdf_data = kwargs['pdf_data']
-            label_image = self.render_to_png(label=None, pdf_data=pdf_data)
-        
+        label_image = self.render_to_png(label, item)
 
         # Read settings
-        model = self.get_setting('MODEL')
-        density = int(self.get_setting('DENSITY'))
-        vertical_offset = int(self.get_setting('V_OFFSET'))
-        horizontal_offset = int(self.get_setting('H_OFFSET'))
-        scaling = float(self.get_setting('SCALING'))
-        rotation = int(self.get_setting('ROTATION')) + 90
+        model = machine.get_setting("MODEL", "D")
+        density = int(machine.get_setting("DENSITY", "D"))
+        vertical_offset = int(machine.get_setting("V_OFFSET", "D"))
+        horizontal_offset = int(machine.get_setting("H_OFFSET", "D"))
+        scaling = float(machine.get_setting("SCALING", "D"))
+        rotation = int(machine.get_setting("ROTATION", "D")) + 90
         rotation = rotation % 360
 
         # Rotate image
