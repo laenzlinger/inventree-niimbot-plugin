@@ -46,7 +46,10 @@ setuptools.setup(
         'setuptools==69.5.1',
         'markdown-it-py==3.0.0',
         'loguru==0.7.2',
-        'pillow==10.3.0',
+        # pillow removed: InvenTree already ships it.
+        # The pinned version caused an incomplete install into /root/.local/
+        # that shadowed the working system Pillow, breaking all label printing.
+        # See: https://github.com/piramja/inventree-niimbot-plugin/issues/4
     ],
 
     setup_requires=[
