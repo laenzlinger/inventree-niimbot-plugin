@@ -96,7 +96,12 @@ class NiimbotLabelPrinterDriver(LabelPrinterBaseDriver):
             },
             "USB_PORT": {
                 "name": _("USB Port"),
-                "description": _("Serial device path (e.g. /dev/niimbot)"),
+                "description": _("Serial device path"),
+                "choices": [
+                    ("/dev/niimbot", "/dev/niimbot"),
+                    ("/dev/ttyUSB0", "/dev/ttyUSB0"),
+                    ("/dev/ttyACM0", "/dev/ttyACM0"),
+                ],
                 "default": "/dev/niimbot",
                 "required": False,
             },
