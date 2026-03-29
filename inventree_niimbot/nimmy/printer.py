@@ -4,7 +4,6 @@ import struct
 import math
 from PIL import Image, ImageOps
 from .exception import BLEException, PrinterException
-from .bluetooth import BLETransport
 from .logger_config import get_logger
 from .packet import NiimbotPacket, packet_to_int
 
@@ -43,25 +42,37 @@ class RequestCodeEnum(enum.IntEnum):
 
 
 class PrinterClient:
-    def __init__(self, device):
-        self.char_uuid = None
+    def __init__(self, device=None, transport=None):
         self.device = device
-        self.transport = BLETransport()
+        self.transport = transport
+        self.char_uuid = None
         self.notification_event = asyncio.Event()
         self.notification_data = None
+        self._use_serial = transport is not None and hasattr(transport, 'read_packet')
+
+        # If no transport provided, create BLE transport (backwards compatible)
+        if self.transport is None:
+            from .bluetooth import BLETransport
+            self.transport = BLETransport()
 
     async def connect(self):
-        if await self.transport.connect(self.device.address):
-            if not self.char_uuid:
-                await self.find_characteristics()
-            logger.info(f"Successfully connected to {self.device.name}")
-            return True
+        if self._use_serial:
+            address = self.device if isinstance(self.device, str) else None
+            if await self.transport.connect(address):
+                logger.info(f"Connected via serial")
+                return True
+        else:
+            if await self.transport.connect(self.device.address):
+                if not self.char_uuid:
+                    await self.find_characteristics()
+                logger.info(f"Successfully connected to {self.device.name}")
+                return True
         logger.error("Connection failed.")
         return False
 
     async def disconnect(self):
         await self.transport.disconnect()
-        logger.info(f"Printer {self.device.name} disconnected.")
+        logger.info("Printer disconnected.")
 
     async def find_characteristics(self):
         services = {}
@@ -73,65 +84,92 @@ class PrinterClient:
                     "handle": char.handle,
                     "properties": char.properties
                 })
-
             services[service.uuid] = s
 
         for service_id, characteristics in services.items():
-            if len(characteristics) == 1:  # Check if there's exactly one characteristic
+            if len(characteristics) == 1:
                 props = characteristics[0]['properties']
                 if 'read' in props and 'write-without-response' in props and 'notify' in props:
-                    self.char_uuid = characteristics[0]['id']  # Return the service ID that meets the criteria
+                    self.char_uuid = characteristics[0]['id']
         if not self.char_uuid:
             raise PrinterException("Cannot find bluetooth characteristics.")
 
     async def send_command(self, request_code, data, timeout=10):
         try:
-            if not self.transport.client or not self.transport.client.is_connected:
-                await self.connect()
-            packet = NiimbotPacket(request_code, data)
-            await self.transport.start_notification(self.char_uuid, self.notification_handler)
-            await self.transport.write(packet.to_bytes(), self.char_uuid)
-            logger.debug(
-                f"Printer command sent - {RequestCodeEnum(request_code).name}:{request_code} - {[b for b in data]}")
-
-            await asyncio.wait_for(self.notification_event.wait(), timeout)  # Wait until the notification event is set
-            response = NiimbotPacket.from_bytes(self.notification_data)
-            logger.debug(
-                f"Printer response received - {[b for b in response.data]} - {len(response.data)} bytes")
-
-            await self.transport.stop_notification(self.char_uuid)
-            self.notification_event.clear()  # Reset the event for the next notification
-            return response
+            if self._use_serial:
+                return await self._send_command_serial(request_code, data, timeout)
+            else:
+                return await self._send_command_ble(request_code, data, timeout)
         except asyncio.TimeoutError:
             logger.error(f"Timeout occurred for request {RequestCodeEnum(request_code).name}")
-        except BLEException as e:
+        except (BLEException, IOError) as e:
             logger.error(f"An error occurred: {e}")
+
+    async def _send_command_serial(self, request_code, data, timeout):
+        if not self.transport.is_connected:
+            await self.connect()
+        packet = NiimbotPacket(request_code, data)
+        await self.transport.write(packet.to_bytes())
+        logger.debug(
+            f"Printer command sent - {RequestCodeEnum(request_code).name}:{request_code} - {[b for b in data]}")
+
+        response = self.transport.read_packet()
+        if response:
+            logger.debug(
+                f"Printer response received - {[b for b in response.data]} - {len(response.data)} bytes")
+        return response
+
+    async def _send_command_ble(self, request_code, data, timeout):
+        if not self.transport.client or not self.transport.client.is_connected:
+            await self.connect()
+        packet = NiimbotPacket(request_code, data)
+        await self.transport.start_notification(self.char_uuid, self.notification_handler)
+        await self.transport.write(packet.to_bytes(), self.char_uuid)
+        logger.debug(
+            f"Printer command sent - {RequestCodeEnum(request_code).name}:{request_code} - {[b for b in data]}")
+
+        await asyncio.wait_for(self.notification_event.wait(), timeout)
+        response = NiimbotPacket.from_bytes(self.notification_data)
+        logger.debug(
+            f"Printer response received - {[b for b in response.data]} - {len(response.data)} bytes")
+
+        await self.transport.stop_notification(self.char_uuid)
+        self.notification_event.clear()
+        return response
 
     async def write_raw(self, data):
         try:
-            if not self.transport.client or not self.transport.client.is_connected:
-                await self.connect()
-            await self.transport.write(data.to_bytes(), self.char_uuid)
-        except BLEException as e:
+            if self._use_serial:
+                if not self.transport.is_connected:
+                    await self.connect()
+                await self.transport.write(data.to_bytes())
+            else:
+                if not self.transport.client or not self.transport.client.is_connected:
+                    await self.connect()
+                await self.transport.write(data.to_bytes(), self.char_uuid)
+        except (BLEException, IOError) as e:
             logger.error(f"An error occurred: {e}")
 
     async def write_no_notify(self, request_code, data):
         try:
-            if not self.transport.client or not self.transport.client.is_connected:
-                await self.connect()
+            if self._use_serial:
+                if not self.transport.is_connected:
+                    await self.connect()
+            else:
+                if not self.transport.client or not self.transport.client.is_connected:
+                    await self.connect()
             packet = NiimbotPacket(request_code, data)
-            await self.transport.write(packet.to_bytes(), self.char_uuid)
-        except BLEException as e:
+            await self.transport.write(packet.to_bytes(), self.char_uuid if not self._use_serial else None)
+        except (BLEException, IOError) as e:
             logger.error(f"An error occurred: {e}")
 
     def notification_handler(self, sender, data):
-        # print(f"Notification from {sender}: {data}")
         logger.trace(f"Notification: {data}")
         self.notification_data = data
         self.notification_event.set()
 
-    async def print_image(self, image: Image, density: int = 3, quantity: int = 1, vertical_offset= 0,
-                          horizontal_offset = 0):
+    async def print_image(self, image: Image, density: int = 3, quantity: int = 1, vertical_offset=0,
+                          horizontal_offset=0):
         await self.set_label_density(density)
         await self.set_label_type(1)
         await self.start_print()
@@ -140,10 +178,8 @@ class PrinterClient:
         await self.set_quantity(quantity)
 
         for pkt in self._encode_image(image, vertical_offset, horizontal_offset):
-            # Send each line and wait for a response or status check
             await self.write_raw(pkt)
-            # Adding a short delay or status check here can help manage buffer issues
-            await asyncio.sleep(0.01)  # Adjust the delay as needed based on printer feedback
+            await asyncio.sleep(0.01)
 
         while not await self.end_page_print():
             await asyncio.sleep(0.05)
@@ -166,34 +202,27 @@ class PrinterClient:
 
         for pkt in self._encode_image(image, vertical_offset, horizontal_offset):
             logger.debug(f"Sending packet: {pkt}")
-            # Send each line and wait for a response or status check
             await self.write_raw(pkt)
-            # Adding a short delay or status check here can help manage buffer issues
-            # Adjust the delay as needed based on printer feedback
             await asyncio.sleep(0.01)
 
         await self.end_page_print()
-
-        await asyncio.sleep(2) # Sleep for some time, looks like it enhances the reliability of the print job
+        await asyncio.sleep(2)
 
     def _encode_image(self, image: Image, vertical_offset=0, horizontal_offset=0):
-        # Convert the image to monochrome
         img = ImageOps.invert(image.convert("L")).convert("1")
 
-        # Apply horizontal offset
         if horizontal_offset > 0:
             img = ImageOps.expand(img, border=(horizontal_offset, 0, 0, 0), fill=1)
         else:
             img = img.crop((-horizontal_offset, 0, img.width, img.height))
 
-        # Add vertical padding for vertical offset
         img = ImageOps.expand(img, border=(0, vertical_offset, 0, 0), fill=1)
 
         for y in range(img.height):
             line_data = [img.getpixel((x, y)) for x in range(img.width)]
             line_data = "".join("0" if pix == 0 else "1" for pix in line_data)
             line_data = int(line_data, 2).to_bytes(math.ceil(img.width / 8), "big")
-            counts = (0, 0, 0)  # It seems like you can always send zeros
+            counts = (0, 0, 0)
             header = struct.pack(">H3BB", y, *counts, 1)
             pkt = NiimbotPacket(0x85, header + line_data)
             yield pkt
@@ -283,17 +312,16 @@ class PrinterClient:
         return bool(packet.data[0])
 
     async def set_label_density(self, n):
-        assert 1 <= n <= 5  # B21 has 5 levels, not sure for D11
+        assert 1 <= n <= 5
         packet = await self.send_command(RequestCodeEnum.SET_LABEL_DENSITY, bytes((n,)))
         return bool(packet.data[0])
 
     async def start_print(self):
         packet = await self.send_command(RequestCodeEnum.START_PRINT, b"\x01")
         return bool(packet.data[0])
-    
-    async def start_printV2(self, quantity):
-        assert 0 <= quantity <= 65535  # assume quantity can not be greater than 65535 (2 bytes)
 
+    async def start_printV2(self, quantity):
+        assert 0 <= quantity <= 65535
         command = struct.pack('H', quantity)
         packet = await self.send_command(RequestCodeEnum.START_PRINT, b'\x00' + command + b'\x00\x00\x00\x00')
         return bool(packet.data[0])
@@ -319,7 +347,7 @@ class PrinterClient:
             RequestCodeEnum.SET_DIMENSION, struct.pack(">HH", w, h)
         )
         return bool(packet.data[0])
-    
+
     async def set_dimensionV2(self, w, h, copies):
         logger.debug(f"Setting dimension: {w}x{h}")
         packet = await self.send_command(
@@ -335,11 +363,3 @@ class PrinterClient:
         packet = await self.send_command(RequestCodeEnum.GET_PRINT_STATUS, b"\x01")
         page, progress1, progress2 = struct.unpack(">HBB", packet.data)
         return {"page": page, "progress1": progress1, "progress2": progress2}
-
-    def __del__(self):
-        if self.transport.client.is_connected:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                loop.create_task(self.disconnect())
-            else:
-                loop.run_until_complete(self.disconnect())

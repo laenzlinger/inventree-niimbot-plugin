@@ -50,6 +50,7 @@ setuptools.setup(
         # The pinned version caused an incomplete install into /root/.local/
         # that shadowed the working system Pillow, breaking all label printing.
         # See: https://github.com/piramja/inventree-niimbot-plugin/issues/4
+        'pyserial>=3.5',
     ],
 
     setup_requires=[

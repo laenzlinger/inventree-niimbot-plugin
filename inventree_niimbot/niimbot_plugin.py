@@ -24,13 +24,10 @@ from plugin.machine.machine_types import LabelPrinterBaseDriver, LabelPrinterMac
 from PIL import Image
 
 import asyncio
-from bleak import BleakClient, BleakScanner
 
 # NiimbotPrintX printer client
-from inventree_niimbot.nimmy.bluetooth import find_device
 from inventree_niimbot.nimmy.printer import PrinterClient, InfoEnum
 from inventree_niimbot.nimmy.logger_config import setup_logger, get_logger, logger_enable
-
 
 
 class NiimbotLabelSerializer(serializers.Serializer):
@@ -87,6 +84,22 @@ class NiimbotLabelPrinterDriver(LabelPrinterBaseDriver):
         """Initialize the NiimbotLabelPrinterDriver."""
 
         self.MACHINE_SETTINGS = {
+            "CONNECTION": {
+                "name": _("Connection Type"),
+                "description": _("USB serial or Bluetooth"),
+                "choices": [
+                    ("usb", "USB Serial"),
+                    ("bluetooth", "Bluetooth"),
+                ],
+                "default": "usb",
+                "required": True,
+            },
+            "USB_PORT": {
+                "name": _("USB Port"),
+                "description": _("Serial device path (e.g. /dev/niimbot)"),
+                "default": "/dev/niimbot",
+                "required": False,
+            },
             "MODEL": {
                 "name": _("Printer Model"),
                 "description": _("Select model of Niimbot printer"),
@@ -97,7 +110,7 @@ class NiimbotLabelPrinterDriver(LabelPrinterBaseDriver):
                     ("d11", "Niimbot D11"),
                     ("d110", "Niimbot D110")
                 ],
-                "default": "b1",
+                "default": "d110",
                 "required": True,
             },
             "DENSITY": {
@@ -130,25 +143,10 @@ class NiimbotLabelPrinterDriver(LabelPrinterBaseDriver):
                 "description": _("Image scaling in percent"),
                 "choices": [
                     ("2", "200%"),
-                    ("1.9", "190%"),
-                    ("1.8", "180%"),
-                    ("1.7", "170%"),
-                    ("1.6", "160%"),
                     ("1.5", "150%"),
-                    ("1.4", "140%"),
-                    ("1.3", "130%"),
-                    ("1.2", "120%"),
-                    ("1.1", "110%"),
                     ("1", "100%"),
-                    ("0.9", "90%"),
-                    ("0.8", "80%"),
-                    ("0.7", "70%"),
-                    ("0.6", "60%"),
+                    ("0.75", "75%"),
                     ("0.5", "50%"),
-                    ("0.4", "40%"),
-                    ("0.3", "30%"),
-                    ("0.2", "20%"),
-                    ("0.1", "10%"),
                 ],
                 "default": "1",
                 "required": True,
@@ -156,60 +154,14 @@ class NiimbotLabelPrinterDriver(LabelPrinterBaseDriver):
             "V_OFFSET": {
                 "name": _("Vertical Offset (px)"),
                 "description": _("Image offset vertical"),
-                "choices": [
-                    ("0", "0px"),
-                    ("10", "10px"),
-                    ("20", "20px"),
-                    ("30", "30px"),
-                    ("40", "40px"),
-                    ("50", "50px"),
-                    ("60", "60px"),
-                    ("70", "70px"),
-                    ("80", "80px"),
-                    ("90", "90px"),
-                    ("100", "100px"),
-                    ("110", "110px"),
-                    ("120", "120px"),
-                    ("130", "130px"),
-                    ("140", "140px"),
-                    ("150", "150px"),
-                    ("160", "160px"),
-                    ("170", "170px"),
-                    ("180", "180px"),
-                    ("190", "190px"),
-                    ("200", "200px"),
-                ],
                 "default": "0",
-                "required": True,
+                "required": False,
             },
             "H_OFFSET": {
                 "name": _("Horizontal Offset (px)"),
                 "description": _("Image offset horizontal"),
-                "choices": [
-                    ("0", "0px"),
-                    ("10", "10px"),
-                    ("20", "20px"),
-                    ("30", "30px"),
-                    ("40", "40px"),
-                    ("50", "50px"),
-                    ("60", "60px"),
-                    ("70", "70px"),
-                    ("80", "80px"),
-                    ("90", "90px"),
-                    ("100", "100px"),
-                    ("110", "110px"),
-                    ("120", "120px"),
-                    ("130", "130px"),
-                    ("140", "140px"),
-                    ("150", "150px"),
-                    ("160", "160px"),
-                    ("170", "170px"),
-                    ("180", "180px"),
-                    ("190", "190px"),
-                    ("200", "200px"),
-                ],
                 "default": "0",
-                "required": True,
+                "required": False,
             },
         }
 
@@ -218,40 +170,23 @@ class NiimbotLabelPrinterDriver(LabelPrinterBaseDriver):
 
     def init_machine(self, machine: BaseMachineType):
         """Machine initialize hook."""
-        # static dummy setting for now, should probably be actively checked for USB printers
-        # and maybe by running a simple ping test or similar for networked printers
         machine.set_status(LabelPrinterMachine.MACHINE_STATUS.CONNECTED)
-    
-    
+
+
     def print_label(self, machine: LabelPrinterMachine, label: LabelTemplate, item, **kwargs) -> None:
-        """
-        Send the label to the printer
-        """
+        """Send the label to the printer."""
 
-        # TODO: Add padding around the provided image, otherwise the label does not print correctly
-        # ^ Why? The wording in the underlying brother_ql library ('dots_printable') seems to suggest
-        # at least that area is fully printable.
-        # TODO: Improve label auto-scaling based on provided width and height information
-
-        # Extract width (x) and height (y) information
-        # width = kwargs["width"]
-        # height = kwargs["height"]
-        # ^ currently this width and height are those of the label template (before conversion to PDF
-        # and PNG) and are of little use
-
-        # Printing options requires a modern-ish InvenTree backend,
-        # which supports the 'printing_options' keyword argument
         options = kwargs.get("printing_options", {})
         n_copies = int(options.get("copies", 1))
 
-        # Look for png data in kwargs (if provided)
         label_image = self.render_to_png(label, item)
 
         # Read settings
+        connection = machine.get_setting("CONNECTION", "D")
         model = machine.get_setting("MODEL", "D")
         density = int(machine.get_setting("DENSITY", "D"))
-        vertical_offset = int(machine.get_setting("V_OFFSET", "D"))
-        horizontal_offset = int(machine.get_setting("H_OFFSET", "D"))
+        vertical_offset = int(machine.get_setting("V_OFFSET", "D") or 0)
+        horizontal_offset = int(machine.get_setting("H_OFFSET", "D") or 0)
         scaling = float(machine.get_setting("SCALING", "D"))
         rotation = int(machine.get_setting("ROTATION", "D")) + 90
         rotation = rotation % 360
@@ -259,24 +194,41 @@ class NiimbotLabelPrinterDriver(LabelPrinterBaseDriver):
         # Rotate image
         if rotation in [90, 180, 270]:
             label_image = label_image.rotate(rotation, expand=True)
-        
+
         # Resize image
         width, height = label_image.size
         new_size = (int(width * scaling), int(height * scaling))
         label_image = label_image.resize(new_size, Image.LANCZOS)
-        
-        # Add offsets to the image data directly if model is b1 (maybe necessary for other models too?)
+
+        # Add offsets to the image data directly if model is b1
         if model == "b1":
             if vertical_offset > 0 or horizontal_offset > 0:
                 new_image = Image.new("RGB", (label_image.width + horizontal_offset, label_image.height + vertical_offset), (255, 255, 255))
                 new_image.paste(label_image, (horizontal_offset, vertical_offset))
                 label_image = new_image
-        
-        # Print labels
-        asyncio.run(self._print(model, density, label_image, n_copies, vertical_offset, horizontal_offset))
-        
 
-    async def _print(self, model, density, image, quantity, vertical_offset, horizontal_offset):
+        # Print labels
+        if connection == "usb":
+            usb_port = machine.get_setting("USB_PORT", "D") or "/dev/niimbot"
+            asyncio.run(self._print_serial(usb_port, model, density, label_image, n_copies, vertical_offset, horizontal_offset))
+        else:
+            asyncio.run(self._print_ble(model, density, label_image, n_copies, vertical_offset, horizontal_offset))
+
+
+    async def _print_serial(self, port, model, density, image, quantity, vertical_offset, horizontal_offset):
+        from inventree_niimbot.nimmy.serial_transport import SerialTransport
+        transport = SerialTransport(port)
+        printer = PrinterClient(device=port, transport=transport)
+        if await printer.connect():
+            if model == "b1":
+                await printer.print_imageV2(image, density=density, quantity=quantity)
+            else:
+                await printer.print_image(image, density=density, quantity=quantity, vertical_offset=vertical_offset, horizontal_offset=horizontal_offset)
+            await printer.disconnect()
+
+
+    async def _print_ble(self, model, density, image, quantity, vertical_offset, horizontal_offset):
+        from inventree_niimbot.nimmy.bluetooth import find_device
         device = await find_device(model)
         printer = PrinterClient(device)
         if await printer.connect():
@@ -284,5 +236,4 @@ class NiimbotLabelPrinterDriver(LabelPrinterBaseDriver):
                 await printer.print_imageV2(image, density=density, quantity=quantity)
             else:
                 await printer.print_image(image, density=density, quantity=quantity, vertical_offset=vertical_offset, horizontal_offset=horizontal_offset)
-
-        await printer.disconnect()
+            await printer.disconnect()
