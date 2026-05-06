@@ -41,15 +41,12 @@ setuptools.setup(
     packages=setuptools.find_packages(),
 
     install_requires=[
-        'bleak==0.21.1',
-        'devtools==0.12.2',
-        'setuptools==69.5.1',
-        'markdown-it-py==3.0.0',
-        'loguru==0.7.2',
+        # bleak removed: only needed for Bluetooth, we use USB serial.
+        # Pinned 0.21.1 doesn't support Python 3.14 (InvenTree 1.3.x).
+        'devtools>=0.12',
+        'loguru>=0.7',
         # pillow removed: InvenTree already ships it.
-        # The pinned version caused an incomplete install into /root/.local/
-        # that shadowed the working system Pillow, breaking all label printing.
-        # See: https://github.com/piramja/inventree-niimbot-plugin/issues/4
+        # setuptools/markdown-it-py removed: InvenTree already ships them.
         'pyserial>=3.5',
     ],
 
